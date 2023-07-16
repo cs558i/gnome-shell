@@ -3,6 +3,7 @@
 
 const Clutter = imports.gi.Clutter;
 const GLib = imports.gi.GLib;
+const Gio = imports.gi.Gio;
 const GObject = imports.gi.GObject;
 const Pango = imports.gi.Pango;
 const Shell = imports.gi.Shell;
@@ -16,6 +17,7 @@ const Params = imports.misc.params;
 const ShellEntry = imports.ui.shellEntry;
 const UserWidget = imports.ui.userWidget;
 const Util = imports.misc.util;
+const WebLogin = imports.gdm.webLogin;
 
 var DEFAULT_BUTTON_WELL_ICON_SIZE = 16;
 var DEFAULT_BUTTON_WELL_ANIMATION_DELAY = 1000;
@@ -79,6 +81,8 @@ var AuthPrompt = GObject.registerClass({
         this._userVerifier.connect('ask-question', this._onAskQuestion.bind(this));
         this._userVerifier.connect('show-message', this._onShowMessage.bind(this));
         this._userVerifier.connect('show-choice-list', this._onShowChoiceList.bind(this));
+        this._userVerifier.connect('request-external-auth', this._onRequestExternalAuth.bind(this));
+        this._userVerifier.connect('display-link', this._onDisplayLink.bind(this));
         this._userVerifier.connect('verification-failed', this._onVerificationFailed.bind(this));
         this._userVerifier.connect('verification-complete', this._onVerificationComplete.bind(this));
         this._userVerifier.connect('reset', this._onReset.bind(this));
@@ -150,7 +154,7 @@ var AuthPrompt = GObject.registerClass({
             button_mask: St.ButtonMask.ONE | St.ButtonMask.THREE,
             reactive: this._hasCancelButton,
             can_focus: this._hasCancelButton,
-            x_align: Clutter.ActorAlign.START,
+            x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
             icon_name: 'go-previous-symbolic',
         });
@@ -159,6 +163,13 @@ var AuthPrompt = GObject.registerClass({
         else
             this.cancelButton.opacity = 0;
         this._mainBox.add_child(this.cancelButton);
+
+        this._webLoginPromptWell = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._mainBox.add_child(this._webLoginPromptWell);
 
         this._authList = new AuthList.AuthList();
         this._authList.set({
@@ -231,6 +242,24 @@ var AuthPrompt = GObject.registerClass({
 
         this._spinner = new Animation.Spinner(DEFAULT_BUTTON_WELL_ICON_SIZE);
         this._defaultButtonWell.add_child(this._spinner);
+
+        this.nextButton = new St.Button({
+            style_class: 'login-dialog-button next-button',
+            accessible_name: _('Next'),
+            button_mask: St.ButtonMask.ONE | St.ButtonMask.THREE,
+            reactive: true,
+            can_focus: true,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+            icon_name: 'go-next-symbolic',
+        });
+
+        this.nextButton.connect('clicked', () => {
+            this._activateNext(true);
+        });
+        this.nextButton.opacity = 0;
+
+        this._defaultButtonWell.add_child(this.nextButton);
     }
 
     showTimedLoginIndicator(time) {
@@ -274,10 +303,19 @@ var AuthPrompt = GObject.registerClass({
         if (shouldSpin)
             this.startSpinning();
 
-        if (this._queryingService)
-            this._userVerifier.answerQuery(this._queryingService, this._entry.text);
-        else
+        if (this._queryingService) {
+            if (this._waitingForExternalAuth) {
+                this._userVerifier.beginExternalAuth(this._queryingService);
+                this._waitingForExternalAuth = false;
+            } else if (this._waitingForLinkToBeDisplayed) {
+                this._userVerifier.finishExternalAuthLinkDisplay(this._queryingService);
+                this._waitingForLinkToBeDisplayed = false;
+            } else {
+                this._userVerifier.answerQuery(this._queryingService, this._entry.text);
+            }
+	} else {
             this._preemptiveAnswer = this._entry.text;
+        }
 
         this.emit('next');
     }
@@ -293,6 +331,9 @@ var AuthPrompt = GObject.registerClass({
             this._inactiveEntry = this._passwordEntry;
         }
         this._capsLockWarningLabel.visible = secret;
+
+        this._webLoginPromptWell.visible = false;
+        this._entry.visible = true;
     }
 
     _onAskQuestion(verifier, serviceName, question, secret) {
@@ -330,6 +371,63 @@ var AuthPrompt = GObject.registerClass({
             this._preemptiveAnswer = null;
 
         this.setChoiceList(promptMessage, choiceList);
+        this.updateSensitivity(true);
+        this.emit('prompted');
+    }
+
+    _onRequestExternalAuth(userVerifier, serviceName, message) {
+        if (this._queryingService)
+            this.clear();
+
+        this._queryingService = serviceName;
+        this._waitingForExternalAuth = true;
+
+        this._entry.visible = false;
+
+        this.setActorInDefaultButtonWell(this.nextButton);
+
+        if (this._preemptiveAnswer)
+            this._preemptiveAnswer = null;
+
+        this._webLoginPromptWell.remove_all_children();
+
+        if (this._spinner)
+            this._spinner.stop();
+
+        this._webLoginIntro = new WebLogin.WebLoginIntro({ message });
+        this._webLoginIntro.set({
+            x_expand: true,
+            y_align: Clutter.ActorAlign.START,
+        });
+        this._webLoginPromptWell.add_child(this._webLoginIntro);
+        this._webLoginPromptWell.visible = true;
+
+        this.updateSensitivity(true);
+        this.emit('prompted');
+    }
+
+    _onDisplayLink(userVerifier, serviceName, message, url, code) {
+        log(`Code is ${code}`);
+        if (this._queryingService)
+            this.clear();
+
+        this._queryingService = serviceName;
+        this._waitingForLinkToBeDisplayed = true;
+
+        this._webLoginPromptWell.remove_all_children();
+
+        if (this._spinner)
+            this._spinner.stop();
+
+        this._webLoginPrompt = new WebLogin.WebLoginPrompt({url, code });
+        this._webLoginPrompt.set({
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._webLoginPromptWell.add_child(this._webLoginPrompt);
+        this._webLoginPromptWell.visible = true;
+
+        this.setActorInDefaultButtonWell(this.nextButton);
+
         this.updateSensitivity(true);
         this.emit('prompted');
     }

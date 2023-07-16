@@ -63,7 +63,8 @@ gnome_shell_deps = [
   gi_dep,
   polkit_dep,
   gcr_dep,
-  libsystemd_dep
+  libsystemd_dep,
+  qrencode_dep
 ]
 
 gnome_shell_deps += nm_deps
@@ -145,6 +146,8 @@ libshell_sources = [
   'shell-perf-log.c',
   'shell-polkit-authentication-agent.c',
   'shell-polkit-authentication-agent.h',
+  'shell-qr-code-generator.c',
+  'shell-qr-code-generator.h',
   'shell-screenshot.c',
   'shell-secure-text-buffer.c',
   'shell-secure-text-buffer.h',

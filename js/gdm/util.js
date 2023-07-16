@@ -28,6 +28,7 @@ Gio._promisify(Gdm.UserVerifierProxy.prototype,
     'call_begin_verification_for_user');
 Gio._promisify(Gdm.UserVerifierProxy.prototype, 'call_begin_verification');
 
+var EXTERNAL_AUTH_SERVICE_NAME = 'gdm-external-auth';
 var PASSWORD_SERVICE_NAME = 'gdm-password';
 var FINGERPRINT_SERVICE_NAME = 'gdm-fingerprint';
 var SMARTCARD_SERVICE_NAME = 'gdm-smartcard';
@@ -35,6 +36,7 @@ var FADE_ANIMATION_TIME = 160;
 var CLONE_FADE_ANIMATION_TIME = 250;
 
 var LOGIN_SCREEN_SCHEMA = 'org.gnome.login-screen';
+var EXTERNAL_AUTHENTICATION_KEY = 'enable-external-authentication';
 var PASSWORD_AUTHENTICATION_KEY = 'enable-password-authentication';
 var FINGERPRINT_AUTHENTICATION_KEY = 'enable-fingerprint-authentication';
 var SMARTCARD_AUTHENTICATION_KEY = 'enable-smartcard-authentication';
@@ -283,6 +285,14 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
             this.removeCredentialManager(service);
     }
 
+    beginExternalAuth(serviceName) {
+        this._userVerifierExternalAuth.call_start_response(serviceName, this._cancellable, null);
+    }
+
+    finishExternalAuthLinkDisplay(serviceName) {
+        this._userVerifierExternalAuth.call_display_link_response(serviceName, this._cancellable, null);
+    }
+
     selectChoice(serviceName, key) {
         this._userVerifierChoiceList.call_select_choice(serviceName, key, this._cancellable, null);
     }
@@ -447,6 +457,18 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
         this._verificationFailed(serviceName, false);
     }
 
+    _getClientExtensionProxies() {
+        if (this._client.get_user_verifier_choice_list)
+            this._userVerifierChoiceList = this._client.get_user_verifier_choice_list();
+        else
+            this._userVerifierChoiceList = null;
+
+        if (this._client.get_user_verifier_external_auth)
+            this._userVerifierExternalAuth = this._client.get_user_verifier_external_auth();
+        else
+            this._userVerifierExternalAuth = null;
+    }
+
     async _openReauthenticationChannel(userName) {
         try {
             this._clearUserVerifier();
@@ -468,10 +490,7 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
             return;
         }
 
-        if (this._client.get_user_verifier_choice_list)
-            this._userVerifierChoiceList = this._client.get_user_verifier_choice_list();
-        else
-            this._userVerifierChoiceList = null;
+	this._getClientExtensionProxies();
 
         this.reauthenticating = true;
         this._connectSignals();
@@ -491,10 +510,7 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
             return;
         }
 
-        if (this._client.get_user_verifier_choice_list)
-            this._userVerifierChoiceList = this._client.get_user_verifier_choice_list();
-        else
-            this._userVerifierChoiceList = null;
+	this._getClientExtensionProxies();
 
         this._connectSignals();
         this._beginVerification();
@@ -519,11 +535,19 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
             this._userVerifierChoiceList.connectObject('choice-query',
                 this._onChoiceListQuery.bind(this), this);
         }
+
+        if (this._userVerifierExternalAuth) {
+            this._userVerifierExternalAuth.connectObject('start-request',
+                this._onExternalAuthStartRequest.bind(this), this);
+            this._userVerifierExternalAuth.connectObject('display-link-request',
+                this._onExternalAuthDisplayLinkRequest.bind(this), this);
+        }
     }
 
     _disconnectSignals() {
         this._userVerifier?.disconnectObject(this);
         this._userVerifierChoiceList?.disconnectObject(this);
+        this._userVerifierExternalAuth?.disconnectObject(this);
     }
 
     _getForegroundService() {
@@ -556,7 +580,9 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
     }
 
     _updateDefaultService() {
-        if (this._settings.get_boolean(PASSWORD_AUTHENTICATION_KEY))
+        if (this._settings.get_boolean(EXTERNAL_AUTHENTICATION_KEY))
+            this._defaultService = EXTERNAL_AUTH_SERVICE_NAME;
+	else if (this._settings.get_boolean(PASSWORD_AUTHENTICATION_KEY))
             this._defaultService = PASSWORD_SERVICE_NAME;
         else if (this._settings.get_boolean(SMARTCARD_AUTHENTICATION_KEY))
             this._defaultService = SMARTCARD_SERVICE_NAME;
@@ -612,6 +638,20 @@ var ShellUserVerifier = class extends Signals.EventEmitter {
             return;
 
         this.emit('show-choice-list', serviceName, promptMessage, list.deepUnpack());
+    }
+
+    _onExternalAuthStartRequest (client, serviceName, message) {
+        if (!this.serviceIsForeground(serviceName))
+            return;
+
+        this.emit('request-external-auth', serviceName, message);
+    }
+
+    _onExternalAuthDisplayLinkRequest (client, serviceName, message, uri, code) {
+        if (!this.serviceIsForeground(serviceName))
+            return;
+
+        this.emit('display-link', serviceName, message, uri, code);
     }
 
     _onInfo(client, serviceName, info) {

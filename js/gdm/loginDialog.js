@@ -426,7 +426,10 @@ var LoginDialog = GObject.registerClass({
         this._gdmClient = new Gdm.Client();
 
         try {
-            this._gdmClient.set_enabled_extensions([Gdm.UserVerifierChoiceList.interface_info().name]);
+            this._gdmClient.set_enabled_extensions([
+		Gdm.UserVerifierChoiceList.interface_info().name,
+                Gdm.UserVerifierExternalAuth.interface_info().name,
+	    ]);
         } catch (e) {
         }
 
