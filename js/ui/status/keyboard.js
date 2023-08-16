@@ -22,6 +22,9 @@ import * as Util from '../../misc/util.js';
 export const INPUT_SOURCE_TYPE_XKB = 'xkb';
 export const INPUT_SOURCE_TYPE_IBUS = 'ibus';
 
+const DESKTOP_INPUT_SOURCES_SCHEMA = 'org.gnome.desktop.input-sources';
+const KEY_INPUT_SOURCES = 'sources';
+
 export const LayoutMenuItem = GObject.registerClass(
 class LayoutMenuItem extends PopupMenu.PopupBaseMenuItem {
     _init(displayName, shortName) {
@@ -264,14 +267,12 @@ class InputSourceSessionSettings extends InputSourceSettings {
     constructor() {
         super();
 
-        this._DESKTOP_INPUT_SOURCES_SCHEMA = 'org.gnome.desktop.input-sources';
-        this._KEY_INPUT_SOURCES = 'sources';
         this._KEY_MRU_SOURCES = 'mru-sources';
         this._KEY_KEYBOARD_OPTIONS = 'xkb-options';
         this._KEY_PER_WINDOW = 'per-window';
 
-        this._settings = new Gio.Settings({schema_id: this._DESKTOP_INPUT_SOURCES_SCHEMA});
-        this._settings.connect(`changed::${this._KEY_INPUT_SOURCES}`, this._emitInputSourcesChanged.bind(this));
+        this._settings = new Gio.Settings({schema_id: DESKTOP_INPUT_SOURCES_SCHEMA});
+        this._settings.connect(`changed::${KEY_INPUT_SOURCES}`, this._emitInputSourcesChanged.bind(this));
         this._settings.connect(`changed::${this._KEY_KEYBOARD_OPTIONS}`, this._emitKeyboardOptionsChanged.bind(this));
         this._settings.connect(`changed::${this._KEY_PER_WINDOW}`, this._emitPerWindowChanged.bind(this));
     }
@@ -289,7 +290,7 @@ class InputSourceSessionSettings extends InputSourceSettings {
     }
 
     get inputSources() {
-        return this._getSourcesList(this._KEY_INPUT_SOURCES);
+        return this._getSourcesList(KEY_INPUT_SOURCES);
     }
 
     get mruSources() {
@@ -340,7 +341,7 @@ export class InputSourceManager extends Signals.EventEmitter {
                 Meta.KeyBindingFlags.IS_REVERSED,
                 Shell.ActionMode.ALL,
                 this._switchInputSource.bind(this));
-        if (Main.sessionMode.isGreeter)
+        if (Main.sessionMode.isGreeter || this._sessionHasNoInputSettings())
             this._settings = new InputSourceSystemSettings();
         else
             this._settings = new InputSourceSessionSettings();
@@ -365,6 +366,11 @@ export class InputSourceManager extends Signals.EventEmitter {
         this._sourcesPerWindowChanged();
         this._disableIBus = false;
         this._reloading = false;
+    }
+
+    _sessionHasNoInputSettings() {
+        let settings = new Gio.Settings({schema_id: DESKTOP_INPUT_SOURCES_SCHEMA});
+        return settings.get_user_value(KEY_INPUT_SOURCES) === null;
     }
 
     reload() {
