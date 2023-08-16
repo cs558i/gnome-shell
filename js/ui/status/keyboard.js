@@ -3,6 +3,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GnomeDesktop from 'gi://GnomeDesktop';
 import GObject from 'gi://GObject';
 import IBus from 'gi://IBus';
 import Meta from 'gi://Meta';
@@ -242,6 +243,9 @@ class InputSourceSystemSettings extends InputSourceSettings {
             this._options = options;
             this._emitKeyboardOptionsChanged();
         }
+
+        const locales = props['Locale'].deepUnpack();
+        this._systemLocale = (locales.find(category => category.startsWith('LANG=')) || '').replace('LANG=', '');
     }
 
     get inputSources() {
@@ -254,6 +258,16 @@ class InputSourceSystemSettings extends InputSourceSettings {
             if (variants[i])
                 id += `+${variants[i]}`;
             sourcesList.push({type: INPUT_SOURCE_TYPE_XKB, id});
+        }
+
+        if (this._systemLocale) {
+            let [found, type, id] = GnomeDesktop.get_input_source_from_locale(this._systemLocale);
+
+            if (found) {
+                let hasSource = sourcesList.some(sources => sources.type === type && sources.id === id);
+                if (!hasSource)
+                    sourcesList.push({type, id});
+            }
         }
         return sourcesList;
     }
